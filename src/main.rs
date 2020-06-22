@@ -60,14 +60,7 @@ const APP: () = {
 
         let mut rcc = dp.RCC.constrain();
 
-        let clocks = rcc
-            .cfgr
-            .use_hse(25u32.mhz())
-            .hclk(100u32.mhz())
-            .sysclk(100u32.mhz())
-            .pclk1(72u32.mhz())
-            .pclk2(72u32.mhz())
-            .freeze();
+        let clocks = rcc.cfgr.use_hse(25u32.mhz()).sysclk(100u32.mhz()).freeze();
 
         let mut gpiob = dp.GPIOB.split();
         let mut gpioa = dp.GPIOA.split();
@@ -171,12 +164,15 @@ const APP: () = {
 
         write!(&mut buf, "Count: {}", count);
 
+        display.clear(Rgb565::BLACK).unwrap();
         Text::new(&buf, Point::zero())
             .into_styled(TextStyle::new(Font6x8, RUST))
             .draw(display)
             .unwrap();
 
         *count += 1;
+
+        timer.clear_interrupt(Event::TimeOut);
     }
 
     extern "C" {
