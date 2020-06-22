@@ -25,7 +25,7 @@ use stm32f4xx_hal::{
     gpio,
     prelude::*,
     spi::{self, Mode, Phase, Polarity, Spi},
-    stm32::{self, TIM1},
+    stm32::{self, TIM2},
     time::Hertz,
     timer::{Event, Timer},
 };
@@ -47,7 +47,10 @@ const RUST: Rgb565 = Rgb565::new(0xff, 0x07, 0x00);
 const APP: () = {
     struct Resources {
         display: Display,
-        // timer: Timer<TIM1>,
+        timer: Timer<TIM2>,
+        status: StatusLED,
+        #[init(0)]
+        count: u32,
     }
 
     #[init]
@@ -60,6 +63,7 @@ const APP: () = {
         let clocks = rcc
             .cfgr
             .use_hse(25u32.mhz())
+            .hclk(100u32.mhz())
             .sysclk(100u32.mhz())
             .pclk1(72u32.mhz())
             .pclk2(72u32.mhz())
@@ -107,12 +111,12 @@ const APP: () = {
 
         // display.set_orientation(Orientation::Landscape).unwrap();
 
-        // // Update framerate
-        // let fps: u32 = 20;
+        // Update framerate
+        let fps: u32 = 1;
 
-        // let mut timer = Timer::tim1(dp.TIM1, fps.hz(), clocks);
+        let mut timer = Timer::tim2(dp.TIM2, fps.hz(), clocks);
 
-        // timer.listen(Event::TimeOut);
+        timer.listen(Event::TimeOut);
 
         let circle1 = Circle::new(Point::new(128, 64), 64)
             .into_styled(PrimitiveStyle::with_fill(Rgb565::RED));
@@ -141,23 +145,39 @@ const APP: () = {
         status.toggle();
 
         // Init the static resources to use them later through RTIC
-        init::LateResources { display }
+        init::LateResources {
+            timer,
+            display,
+            status,
+        }
     }
 
-    // #[task(binds = TIM1_CC, resources = [timer, display])]
-    // fn update(cx: update::Context) {
-    //     let update::Resources { timer, display, .. } = cx.resources;
+    #[task(binds = TIM2, resources = [timer, display, count, status])]
+    fn update(cx: update::Context) {
+        use core::fmt::Write;
+        use heapless::consts::U16;
 
-    //     display.clear(Rgb565::BLACK).unwrap();
+        let update::Resources {
+            timer,
+            display,
+            count,
+            status,
+            ..
+        } = cx.resources;
 
-    //     Text::new("Update", Point::zero())
-    //         .into_styled(TextStyle::new(Font6x8, RUST))
-    //         .draw(display)
-    //         .unwrap();
+        let mut buf = heapless::String::<U16>::new();
 
-    //     // Clears the update flag
-    //     // timer.clear_interrupt(Event::TimeOut);
-    // }
+        status.toggle();
+
+        write!(&mut buf, "Count: {}", count);
+
+        Text::new(&buf, Point::zero())
+            .into_styled(TextStyle::new(Font6x8, RUST))
+            .draw(display)
+            .unwrap();
+
+        *count += 1;
+    }
 
     extern "C" {
         fn EXTI0();
