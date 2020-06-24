@@ -12,7 +12,7 @@ cortex-m-rt = "0.6.12"
 cortex-m-rtic = "0.5.3"
 embedded-graphics = "0.6.2"
 st7789 = "0.5.0"
-mpu9250 = "0.22.2"
+mpu9250 = { version = "0.22.2", features = [ "i2c" ] }
 stm32f4xx-hal = { version = "0.8.3", features = ["rt", "stm32f411"] }
 debouncr = "0.1.2"
 display-interface = "0.4.0"

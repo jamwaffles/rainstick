@@ -16,13 +16,16 @@ use embedded_graphics::{
     fonts::Text, geometry::Point, image::Image, pixelcolor::BinaryColor, prelude::*, primitives::*,
     style::*,
 };
+use embedded_hal::digital::v2::OutputPin;
+use mpu9250::Mpu9250;
 use panic_halt as _;
 use rtic::app;
 use st7789::{Orientation, ST7789};
-use stm32f4xx_hal::stm32::{SPI1, SPI2};
+use stm32f4xx_hal::stm32::{I2C1, SPI1, SPI2};
 use stm32f4xx_hal::{
     delay::Delay,
     gpio,
+    i2c::{self, I2c},
     prelude::*,
     spi::{self, Mode, Phase, Polarity, Spi},
     stm32::{self, TIM2},
@@ -36,12 +39,47 @@ type DispMOSI = gpio::gpiob::PB15<gpio::Alternate<gpio::AF5>>;
 type DispReset = gpio::gpioa::PA8<gpio::Output<gpio::PushPull>>;
 type DispDC = gpio::gpioa::PA9<gpio::Output<gpio::PushPull>>;
 
+// SPI accel
+type AccelMOSI = gpio::gpioa::PA7<gpio::Alternate<gpio::AF5>>;
+type AccelMISO = gpio::gpioa::PA6<gpio::Alternate<gpio::AF5>>;
+type AccelCLK = gpio::gpioa::PA5<gpio::Alternate<gpio::AF5>>;
+type AccelCS = gpio::gpioa::PA4<gpio::Output<gpio::PushPull>>;
+
+// I2C accel
+type AccelSCL = gpio::gpiob::PB6<gpio::AlternateOD<gpio::AF4>>;
+type AccelSDA = gpio::gpiob::PB7<gpio::AlternateOD<gpio::AF4>>;
+
 type StatusLED = gpio::gpioc::PC13<gpio::Output<gpio::PushPull>>;
 
 type Display =
     ST7789<SPIInterfaceNoCS<spi::Spi<SPI2, (DispSCK, DispMISO, DispMOSI)>, DispDC>, DispReset>;
 
+// SPI
+// type Accel = mpu9250::Mpu9250<
+//     mpu9250::SpiDevice<Spi<SPI1, (AccelCLK, AccelMISO, AccelMOSI)>, AccelCS>,
+//     // mpu9250::Marg,
+//     mpu9250::Imu,
+// >;
+
+// I2C
+type Accel =
+    mpu9250::Mpu9250<mpu9250::I2cDevice<i2c::I2c<I2C1, (AccelSCL, AccelSDA)>>, mpu9250::Marg>;
+
 const RUST: Rgb565 = Rgb565::new(0xff, 0x07, 0x00);
+
+pub struct NoChipSelect;
+
+impl OutputPin for NoChipSelect {
+    type Error = ();
+
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
 
 #[app(device = stm32f4xx_hal::stm32, peripherals = true)]
 const APP: () = {
@@ -51,6 +89,7 @@ const APP: () = {
         status: StatusLED,
         #[init(0)]
         count: u32,
+        accel: Accel,
     }
 
     #[init]
@@ -70,37 +109,89 @@ const APP: () = {
 
         let mut status = gpioc.pc13.into_push_pull_output();
 
-        let sck = gpiob.pb13.into_alternate_af5();
-        let mosi = gpiob.pb15.into_alternate_af5();
+        let mut display = {
+            let sck = gpiob.pb13.into_alternate_af5();
+            let mosi = gpiob.pb15.into_alternate_af5();
 
-        let mut rst = gpioa.pa8.into_push_pull_output();
-        let dc = gpioa.pa9.into_push_pull_output();
+            let mut rst = gpioa.pa8.into_push_pull_output();
+            let dc = gpioa.pa9.into_push_pull_output();
 
-        let spi = Spi::spi2(
-            dp.SPI2,
-            (sck, spi::NoMiso, mosi),
-            Mode {
-                polarity: Polarity::IdleHigh,
-                phase: Phase::CaptureOnFirstTransition,
-            },
-            48.mhz().into(),
-            clocks,
-        );
+            let spi = Spi::spi2(
+                dp.SPI2,
+                (sck, spi::NoMiso, mosi),
+                Mode {
+                    polarity: Polarity::IdleHigh,
+                    phase: Phase::CaptureOnFirstTransition,
+                },
+                48.mhz().into(),
+                clocks,
+            );
 
-        hprintln!("Spi setup");
-        status.toggle();
+            hprintln!("Spi setup");
+            status.toggle();
 
-        let interface = display_interface_spi::SPIInterfaceNoCS::new(spi, dc);
+            let interface = display_interface_spi::SPIInterfaceNoCS::new(spi, dc);
 
-        hprintln!("Interface initialised");
-        status.toggle();
+            hprintln!("Interface initialised");
+            status.toggle();
 
-        let mut display = ST7789::new(interface, rst, 240, 240);
+            let mut display = ST7789::new(interface, rst, 240, 240);
 
-        display.init(&mut delay).unwrap();
+            display.init(&mut delay).unwrap();
 
-        hprintln!("Display initialised");
-        status.toggle();
+            hprintln!("Display initialised");
+            status.toggle();
+
+            display
+        };
+
+        // // SPI
+        // let accel = {
+        //     let ncs = gpioa.pa4.into_push_pull_output();
+        //     let sck = gpioa.pa5.into_alternate_af5();
+        //     let miso = gpioa.pa6.into_alternate_af5();
+        //     let mosi = gpioa.pa7.into_alternate_af5();
+
+        //     let spi = Spi::spi1(
+        //         dp.SPI1,
+        //         (sck, miso, mosi),
+        //         Mode {
+        //             polarity: Polarity::IdleHigh,
+        //             phase: Phase::CaptureOnSecondTransition,
+        //         },
+        //         100.khz().into(),
+        //         clocks,
+        //     );
+
+        //     let mpu =
+        //         Mpu9250::imu_default(spi, ncs, &mut delay).expect("Failed to initialise MPU9250");
+
+        //     hprintln!(
+        //         "MPU9250 Initialised: {}. {}",
+        //         mpu.imu_supported(),
+        //         mpu.marg_supported()
+        //     );
+
+        //     mpu
+        // };
+
+        // I2C
+        let accel = {
+            hprintln!("MPU9250...");
+            let scl = gpiob.pb6.into_alternate_af4_open_drain();
+            let sda = gpiob.pb7.into_alternate_af4_open_drain();
+
+            let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 400.khz().into(), clocks);
+
+            hprintln!("MPU9250 I2C built");
+
+            let mut mpu =
+                Mpu9250::marg_default(i2c, &mut delay).expect("Failed to initialise MPU9250");
+
+            hprintln!("MPU9250 Initialised");
+
+            mpu
+        };
 
         // display.set_orientation(Orientation::Landscape).unwrap();
 
@@ -142,6 +233,7 @@ const APP: () = {
             timer,
             display,
             status,
+            accel,
         }
     }
 
