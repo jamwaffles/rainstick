@@ -177,18 +177,20 @@ const APP: () = {
 
         // I2C
         let accel = {
-            hprintln!("MPU9250...");
             let scl = gpiob.pb6.into_alternate_af4_open_drain();
             let sda = gpiob.pb7.into_alternate_af4_open_drain();
 
             let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 400.khz().into(), clocks);
 
-            hprintln!("MPU9250 I2C built");
+            hprintln!("Initialise MPU9250...");
 
             let mut mpu =
                 Mpu9250::marg_default(i2c, &mut delay).expect("Failed to initialise MPU9250");
 
-            hprintln!("MPU9250 Initialised");
+            let who_am_i = mpu.who_am_i().expect("could not read WHO_AM_I");
+            let mag_who_am_i = mpu
+                .ak8963_who_am_i()
+                .expect("could not read magnetometer's WHO_AM_I");
 
             mpu
         };
