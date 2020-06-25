@@ -81,6 +81,8 @@ impl OutputPin for NoChipSelect {
     }
 }
 
+const SAMPLE_RATE_HZ: u32 = 1;
+
 #[app(device = stm32f4xx_hal::stm32, peripherals = true)]
 const APP: () = {
     struct Resources {
@@ -197,10 +199,7 @@ const APP: () = {
 
         // display.set_orientation(Orientation::Landscape).unwrap();
 
-        // Update framerate
-        let fps: u32 = 1;
-
-        let mut timer = Timer::tim2(dp.TIM2, fps.hz(), clocks);
+        let mut timer = Timer::tim2(dp.TIM2, SAMPLE_RATE_HZ.hz(), clocks);
 
         timer.listen(Event::TimeOut);
 
