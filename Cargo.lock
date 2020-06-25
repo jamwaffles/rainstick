@@ -182,6 +182,15 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8107dafa78c80c848b71b60133954b4a58609a3a1a5f9af037ecc7f67280f369"
+dependencies = [
+ "typenum",
+]
+
+[[package]]
+name = "generic-array"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c68f0274ae0e023facc3c97b2e00f076be70e254bc851d972503b328db79b2ec"
@@ -226,6 +235,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c398b2b113b55809ceb9ee3e753fcbac793f1956663f3c36549c1346015c2afe"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "m"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9199148efbf3463493dd58c03a921add4623147739b9acd15f339b1dc5bfd677"
+
+[[package]]
+name = "madgwick"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52760a80742f3053ff3b578eb14df5a881538584e22524ac915102dbf274b1bc"
+dependencies = [
+ "m",
+ "mat",
+]
+
+[[package]]
+name = "mat"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8401e35d18e3132a68bed048083960c701cdb5ad386815ef5661863cc6da7ebd"
+dependencies = [
+ "generic-array 0.11.1",
 ]
 
 [[package]]
@@ -294,6 +328,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal",
  "heapless",
+ "madgwick",
  "mpu9250",
  "panic-halt",
  "st7789",

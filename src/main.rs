@@ -10,14 +10,14 @@
 use core::convert::TryFrom;
 use cortex_m_semihosting::hprintln;
 use display_interface_spi::SPIInterfaceNoCS;
-use embedded_graphics::fonts::Font6x8;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::{
-    fonts::Text, geometry::Point, image::Image, pixelcolor::BinaryColor, prelude::*, primitives::*,
+    fonts::*, geometry::Point, image::Image, pixelcolor::BinaryColor, prelude::*, primitives::*,
     style::*,
 };
 use embedded_hal::digital::v2::OutputPin;
-use mpu9250::Mpu9250;
+use madgwick::*;
+use mpu9250::{MargMeasurements, Mpu9250};
 use panic_halt as _;
 use rtic::app;
 use st7789::{Orientation, ST7789};
@@ -62,7 +62,7 @@ type Display =
 // >;
 
 // I2C
-type Accel =
+type IMU =
     mpu9250::Mpu9250<mpu9250::I2cDevice<i2c::I2c<I2C1, (AccelSCL, AccelSDA)>>, mpu9250::Marg>;
 
 const RUST: Rgb565 = Rgb565::new(0xff, 0x07, 0x00);
@@ -81,7 +81,7 @@ impl OutputPin for NoChipSelect {
     }
 }
 
-const SAMPLE_RATE_HZ: u32 = 1;
+const SAMPLE_RATE_HZ: u32 = 5;
 
 #[app(device = stm32f4xx_hal::stm32, peripherals = true)]
 const APP: () = {
@@ -91,7 +91,8 @@ const APP: () = {
         status: StatusLED,
         #[init(0)]
         count: u32,
-        accel: Accel,
+        imu: IMU,
+        madgwick: Marg,
     }
 
     #[init]
@@ -144,8 +145,12 @@ const APP: () = {
             hprintln!("Display initialised");
             status.toggle();
 
+            display.clear(Rgb565::BLACK).unwrap();
+
             display
         };
+
+        let mut madgwick = Marg::new(0.4, 1.0 / SAMPLE_RATE_HZ as f32);
 
         // // SPI
         // let accel = {
@@ -178,7 +183,7 @@ const APP: () = {
         // };
 
         // I2C
-        let accel = {
+        let mut imu = {
             let scl = gpiob.pb6.into_alternate_af4_open_drain();
             let sda = gpiob.pb7.into_alternate_af4_open_drain();
 
@@ -203,28 +208,33 @@ const APP: () = {
 
         timer.listen(Event::TimeOut);
 
-        let circle1 = Circle::new(Point::new(128, 64), 64)
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED));
-        let circle2 = Circle::new(Point::new(64, 64), 64)
-            .into_styled(PrimitiveStyle::with_stroke(Rgb565::GREEN, 1));
+        // let circle1 = Circle::new(Point::new(128, 64), 64)
+        //     .into_styled(PrimitiveStyle::with_fill(Rgb565::RED));
+        // let circle2 = Circle::new(Point::new(64, 64), 64)
+        //     .into_styled(PrimitiveStyle::with_stroke(Rgb565::GREEN, 1));
 
-        let blue_with_red_outline = PrimitiveStyleBuilder::new()
-            .fill_color(Rgb565::BLUE)
-            .stroke_color(Rgb565::RED)
-            .stroke_width(1) // > 1 is not currently supported in embedded-graphics on triangles
-            .build();
-        let triangle = Triangle::new(
-            Point::new(40, 120),
-            Point::new(40, 220),
-            Point::new(140, 120),
-        )
-        .into_styled(blue_with_red_outline);
+        // let blue_with_red_outline = PrimitiveStyleBuilder::new()
+        //     .fill_color(Rgb565::BLUE)
+        //     .stroke_color(Rgb565::RED)
+        //     .stroke_width(1) // > 1 is not currently supported in embedded-graphics on triangles
+        //     .build();
+        // let triangle = Triangle::new(
+        //     Point::new(40, 120),
+        //     Point::new(40, 220),
+        //     Point::new(140, 120),
+        // )
+        // .into_styled(blue_with_red_outline);
 
-        // draw two circles on black background
-        display.clear(Rgb565::BLACK).unwrap();
-        circle1.draw(&mut display).unwrap();
-        circle2.draw(&mut display).unwrap();
-        triangle.draw(&mut display).unwrap();
+        // // draw two circles on black background
+        // display.clear(Rgb565::BLACK).unwrap();
+        // circle1.draw(&mut display).unwrap();
+        // circle2.draw(&mut display).unwrap();
+        // triangle.draw(&mut display).unwrap();
+
+        // Text::new("WXYZ", Point::new(10, 10))
+        //     .into_styled(TextStyle::new(Font12x16, RUST))
+        //     .draw(&mut display)
+        //     .unwrap();
 
         hprintln!("Init complete");
         status.toggle();
@@ -234,34 +244,113 @@ const APP: () = {
             timer,
             display,
             status,
-            accel,
+            imu,
+            madgwick,
         }
     }
 
-    #[task(binds = TIM2, resources = [timer, display, count, status])]
+    #[task(binds = TIM2, resources = [timer, display, count, status, madgwick, imu])]
     fn update(cx: update::Context) {
         use core::fmt::Write;
-        use heapless::consts::U16;
+        use heapless::consts::U32;
 
         let update::Resources {
             timer,
             display,
             count,
             status,
+            madgwick,
+            imu,
             ..
         } = cx.resources;
 
-        let mut buf = heapless::String::<U16>::new();
-
         status.toggle();
 
-        write!(&mut buf, "Count: {}", count);
+        let Converted { accel, gyro, mag } =
+            convert_measurements(imu.all().expect("IMU read failed"));
 
-        display.clear(Rgb565::BLACK).unwrap();
-        Text::new(&buf, Point::zero())
-            .into_styled(TextStyle::new(Font6x8, RUST))
+        let quat = madgwick.update(accel, gyro, mag);
+
+        // let w = scale(quat.0);
+        // let x = scale(quat.1);
+        // let y = scale(quat.2);
+        // let z = scale(quat.3);
+
+        let vector = F32x3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        };
+
+        let rotated = rotate(vector, quat);
+
+        let mut buf = heapless::String::<U32>::new();
+
+        write!(
+            &mut buf,
+            "{:.2}, {:.2}, {:.2}",
+            rotated.x, rotated.y, rotated.z
+        );
+
+        let x = (rotated.x * 50.0) as i32;
+        let y = (rotated.y * 50.0) as i32;
+
+        Text::new(&buf, Point::new(10, 10))
+            .into_styled(
+                TextStyleBuilder::new(Font12x16)
+                    .text_color(RUST)
+                    .background_color(Rgb565::BLACK)
+                    .build(),
+            )
             .draw(display)
             .unwrap();
+
+        Circle::new(Point::new(120 + x, 120 + y), 10)
+            .into_styled(PrimitiveStyle::with_stroke(RUST, 1))
+            .draw(display)
+            .unwrap();
+
+        // let circle_radius = 5i32;
+        // let offs = 10;
+        // let top_offs = 40 - offs - 16;
+
+        // // Clear circles
+        // Rectangle::new(Point::new(offs, 40), Point::new(64, 240))
+        //     .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        //     .draw(display)
+        //     .unwrap();
+
+        // Circle::new(
+        //     Point::new(offs + circle_radius, top_offs + w),
+        //     circle_radius as u32,
+        // )
+        // .into_styled(PrimitiveStyle::with_stroke(RUST, 1))
+        // .draw(display)
+        // .unwrap();
+
+        // Circle::new(
+        //     Point::new(offs * 2 + circle_radius, top_offs + x),
+        //     circle_radius as u32,
+        // )
+        // .into_styled(PrimitiveStyle::with_stroke(RUST, 1))
+        // .draw(display)
+        // .unwrap();
+
+        // Circle::new(
+        //     Point::new(offs * 3 + circle_radius, top_offs + y),
+        //     circle_radius as u32,
+        // )
+        // .into_styled(PrimitiveStyle::with_stroke(RUST, 1))
+        // .draw(display)
+        // .unwrap();
+
+        // Circle::new(
+        //     Point::new(offs * 4 + circle_radius, top_offs + z),
+        //     circle_radius as u32,
+        // )
+        // .into_styled(PrimitiveStyle::with_stroke(RUST, 1))
+        // .draw(display)
+        // .unwrap();
 
         *count += 1;
 
@@ -272,3 +361,65 @@ const APP: () = {
         fn EXTI0();
     }
 };
+
+/// http://www.euclideanspace.com/maths/algebra/realNormedAlgebra/quaternions/transforms/derivations/vectors/index.htm
+fn rotate(vector: F32x3, quat: Quaternion) -> F32x3 {
+    let Quaternion(qw, qx, qy, qz) = quat;
+    let F32x3 { x, y, z } = vector;
+
+    let out_x = x * (qx * qx + qw * qw - qy * qy - qz * qz)
+        + y * (2.0 * qx * qy - 2.0 * qw * qz)
+        + z * (2.0 * qx * qz + 2.0 * qw * qy);
+    let out_y = x * (2.0 * qw * qz + 2.0 * qx * qy)
+        + y * (qw * qw - qx * qx + qy * qy - qz * qz)
+        + z * (-2.0 * qw * qx + 2.0 * qy * qz);
+    let out_z = x * (-2.0 * qw * qy + 2.0 * qx * qz)
+        + y * (2.0 * qw * qx + 2.0 * qy * qz)
+        + z * (qw * qw - qx * qx - qy * qy + qz * qz);
+
+    F32x3 {
+        x: out_x,
+        y: out_y,
+        z: out_z,
+    }
+}
+
+fn scale(input: f32) -> i32 {
+    // Scale -1.0 - 1.0 to 0.0 - 2.0
+    let input = input + 1.0;
+
+    // 200px full scale
+    let input = input * 100.0;
+
+    input as i32
+}
+
+struct Converted {
+    accel: F32x3,
+    gyro: F32x3,
+    mag: F32x3,
+}
+
+fn convert_measurements(all: MargMeasurements<[f32; 3]>) -> Converted {
+    let MargMeasurements {
+        accel, gyro, mag, ..
+    } = all;
+
+    Converted {
+        accel: F32x3 {
+            x: accel[0],
+            y: accel[1],
+            z: accel[2],
+        },
+        gyro: F32x3 {
+            x: gyro[0],
+            y: gyro[1],
+            z: gyro[2],
+        },
+        mag: F32x3 {
+            x: mag[0],
+            y: mag[1],
+            z: mag[2],
+        },
+    }
+}
